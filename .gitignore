@@ -66,3 +66,6 @@ privatekey.p12
 # builds
 *.zip
 *.exe
+
+# local docs
+restore-mbox-doc.txt
