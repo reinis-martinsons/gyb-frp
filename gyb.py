@@ -405,7 +405,6 @@ def generateXOAuthString(email, service_account=False, debug=False):
     storage = oauth2client.file.Storage(cfgFile)
     credentials = storage.get()
     if credentials is None or credentials.invalid:
-#      requestOAuthAccess(email, debug)
       requestOAuthAccess()
       credentials = storage.get()
   if credentials.access_token_expired:
@@ -970,7 +969,7 @@ def main(argv):
       sys.exit(3)
     if not options.use_folder:
       options.use_folder = ALL_MAIL
-    ALL_MAIL = b'\x22' + ALL_MAIL.encode() + b'\x22'
+    ALL_MAIL = b'\"' + ALL_MAIL.encode() + b'\"'
     r, d = imapconn.select(ALL_MAIL, readonly=True)
     if r == 'NO':
       print("Error: Cannot select the Gmail \"All Mail\" folder. Please make sure it is not hidden from IMAP.")
@@ -1421,14 +1420,7 @@ def main(argv):
 
  # RESTORE-MBOX(IMAP) #
   elif options.action == 'restore-mbox' and options.use_imap:
-    imapconn.select(b'\x22' + options.use_folder.encode() + b'\x22')
-
-
-#    imapconn.logout()
-#    sys.exit(0)
-
-
-    created_labels = []
+    imapconn.select(b'\"' + options.use_folder.encode() + b'\"')
     for path, subdirs, files in os.walk(options.local_folder):
       for filename in files:
         if filename[-4:].lower() != '.mbx' and \
@@ -1461,7 +1453,6 @@ def main(argv):
               labels.append(restore_label)
           cased_labels = []
           imap_labels = labels[:]
-          print(labels)
           for label in labels:
             imap_labels.remove(label)
             if label.lower() in reserved_labels_translation:
@@ -1482,65 +1473,25 @@ def main(argv):
             else:
               cased_labels.append(label)
           labelIds = labelsToLabelIds(cased_labels)
-          print(labelIds)
-          print(cased_labels)
-          print(imap_labels)
-          print(labels)
-#          flags = []
-#          if 'Unread' in labels:
-#            labels.remove('Unread')
-#          else:
-#            flags.append('\Seen')
-#          if 'Starred' in labels:
-#            flags.append('\Flagged')
-#            labels.remove('Starred')
-#          for bad_label in ['Sent', 'Inbox', 'Important', 'Drafts', 'Chat', 'Muted', 'Trash', 'Spam']:
-#              labels.remove(bad_label)
-#              if bad_label == 'Chat':
-#                labels.append('Restored Chats')
-#              elif bad_label == 'Drafts':
-#              if bad_label == 'Drafts':
-#                labels.append('\\\\Draft')
-#              else:
-#                labels.append('\\\\%s' % bad_label)
-#          escaped_labels = []
-#          for label in labels:
-#            if label.find('\"') != -1:
-#              escaped_labels.append(label.replace('\"', '\\"'))
-#            else:
-#              escaped_labels.append(label)
           del message[u'X-Gmail-Labels']
           del message[u'X-GM-THRID']
-#          flags_string = ' '.join(flags)
           msg_account, internal_datetime = message.get_from().split(' ', 1)
           internal_datetime_seconds = time.mktime(email.utils.parsedate(internal_datetime))
-          sys.stdout.write(" message %s of %s" % (current, restore_count))
-          sys.stdout.flush()
+          rewrite_line(' message %s of %s' %
+            (current, restore_count))
           full_message = message.as_bytes()
           while True:
             try:
-#              r, d = imapconn.append(b'\x22' + options.use_folder.encode() + b'\x22', flags_string, internal_datetime_seconds, full_message)
-              r, d = imapconn.append(b'\x22' + options.use_folder.encode() + b'\x22', '\Seen', internal_datetime_seconds, full_message)
+              r, d = imapconn.append(b'\"' + options.use_folder.encode() + b'\"', '\Seen', internal_datetime_seconds, full_message)
               if r != 'OK':
                 print('\nError: %s %s' % (r,d))
                 sys.exit(5)
               restored_uid = int(re.search('^[APPENDUID [0-9]* ([0-9]*)] \(Success\)$', d[0].decode()).group(1))
-
-              t, d = imapconn.uid('FETCH', str(restored_uid), '(X-GM-MSGID X-GM-LABELS)')
-              print(t,d)
+              t, d = imapconn.uid('FETCH', str(restored_uid), '(X-GM-MSGID)')
               restored_msgid = hex(int(re.search('\(X-GM-MSGID ([0-9]*)', d[-1].decode()).group(1)))[2:]
-              print(restored_msgid)
-#              restored_labels = callGAPI(service=gmail.users().messages(), function='get',
-#                  userId='me', id=restored_msgid, format='minimal', fields='labelIds')
-#              print(restored_labels)
-#              print(restored_labels['labelIds'])
-
-              print(callGAPI(service=gmail.users().messages(), function='modify', userId='me', id=restored_msgid,
-                  fields='id', body = {'addLabelIds': labelIds}))
-
-#              if len(labels) > 0:
+              callGAPI(service=gmail.users().messages(), function='modify', userId='me', id=restored_msgid,
+                  body = {'addLabelIds': labelIds})
               if len(imap_labels) > 0:
-#                labels_string = '("'+'" "'.join(escaped_labels)+'")'
                 labels_string = '("'+'" "'.join(imap_labels)+'")'
                 r, d = imapconn.uid('STORE', str(restored_uid), '+X-GM-LABELS', labels_string)
                 if r != 'OK':
@@ -1555,9 +1506,8 @@ def main(argv):
               print('\nsocket.error:%s, retrying...' % e)
               imapconn = gimaplib.ImapConnect(generateXOAuthString(options.email, options.service_account), options.debug)
               imapconn.select(ALL_MAIL)
-
-
     imapconn.logout()
+    print('\n')
     sys.exit(0)
 
   # RESTORE-GROUP #
