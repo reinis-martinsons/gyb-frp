@@ -30,7 +30,7 @@ __website__ = 'http://git.io/gyb'
 __db_schema_version__ = '6'
 __db_schema_min_version__ = '6'        #Minimum for restore
 
-global extra_args, options, allLabelIds, allLabels, gmail, chunksize, reserved_labels, path_divider
+global extra_args, options, allLabelIds, allLabels, gmail, chunksize, reserved_labels, path_divider, reserved_labels_translation
 extra_args = {'prettyPrint': False}
 allLabelIds = dict()
 allLabels = dict()
@@ -976,6 +976,11 @@ def main(argv):
       print("Error: Cannot select the Gmail \"All Mail\" folder. Please make sure it is not hidden from IMAP.")
       sys.exit(3)
     uidvalidity = imapconn.response('UIDVALIDITY')[1][0]
+  if os.path.isfile(getProgPath()+'reserved_translation.txt'):
+    with open(getProgPath()+'reserved_translation.txt') as f:
+      reserved_labels_translation = dict([line.strip('\n').split('\t') for line in f])
+  else:
+    reserved_labels_translation = {}
 
   # SPLIT-MBOX
   if options.action == 'split-mbox':
@@ -1459,6 +1464,8 @@ def main(argv):
           print(labels)
           for label in labels:
             imap_labels.remove(label)
+            if label.lower() in reserved_labels_translation:
+              label = reserved_labels_translation[label.lower()]
             if label.lower() in reserved_labels:
               label = label.upper()
               if label in ['CHAT', 'CHATS']:
