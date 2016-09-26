@@ -1,0 +1,9 @@
+iesūtne	inbox
+mēstules	spam
+miskaste	trash
+nelasītie	unread
+ar zvaigznīti	starred
+svarīgi	important
+nosūtne	sent
+sarunas	chats
+melnraksti	drafts
