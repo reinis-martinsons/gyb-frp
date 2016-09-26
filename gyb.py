@@ -977,7 +977,7 @@ def main(argv):
       sys.exit(3)
     uidvalidity = imapconn.response('UIDVALIDITY')[1][0]
   if os.path.isfile(getProgPath()+'reserved_translation.txt'):
-    with open(getProgPath()+'reserved_translation.txt') as f:
+    with open(getProgPath()+'reserved_translation.txt', encoding="utf-8") as f:
       reserved_labels_translation = dict([line.strip('\n').split('\t') for line in f])
   else:
     reserved_labels_translation = {}
