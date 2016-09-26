@@ -1420,6 +1420,24 @@ def main(argv):
 
  # RESTORE-MBOX(IMAP) #
   elif options.action == 'restore-mbox' and options.use_imap:
+    resumedb = os.path.join(options.local_folder,
+                            "%s-restored.sqlite" % options.email)
+    if options.noresume:
+      try:
+        os.remove(resumedb)
+      except OSError:
+        pass
+      except IOError:
+        pass
+    sqlcur.execute('ATTACH ? as mbox_resume', (resumedb,))
+    sqlcur.executescript('''CREATE TABLE
+                        IF NOT EXISTS mbox_resume.restored_messages
+                        (message_num TEXT PRIMARY KEY)''')
+    sqlcur.execute('SELECT message_num FROM mbox_resume.restored_messages')
+    messages_to_skip_results = sqlcur.fetchall()
+    messages_to_skip = []
+    for a_message in messages_to_skip_results:
+      messages_to_skip.append(a_message[0])
     imapconn.select(b'\"' + options.use_folder.encode() + b'\"')
     for path, subdirs, files in os.walk(options.local_folder):
       for filename in files:
@@ -1437,6 +1455,8 @@ def main(argv):
           message_marker = '%s-%s' % (file_path, current)
           # shorten request_id to prevent content-id errors
           request_id = hashlib.md5(message_marker.encode('utf-8')).hexdigest()[:25]
+          if request_id in messages_to_skip:
+            continue
           labels = message['X-Gmail-Labels']
           if labels != None and labels != '' and not options.strip_labels:
             mybytes, encoding = email.header.decode_header(labels)[0]
@@ -1489,8 +1509,18 @@ def main(argv):
               restored_uid = int(re.search('^[APPENDUID [0-9]* ([0-9]*)] \(Success\)$', d[0].decode()).group(1))
               t, d = imapconn.uid('FETCH', str(restored_uid), '(X-GM-MSGID)')
               restored_msgid = hex(int(re.search('\(X-GM-MSGID ([0-9]*)', d[-1].decode()).group(1)))[2:]
-              callGAPI(service=gmail.users().messages(), function='modify', userId='me', id=restored_msgid,
-                  body = {'addLabelIds': labelIds})
+              if len(labelIds) > 0:
+                try:
+                  response = callGAPI(service=gmail.users().messages(), function='modify', userId='me', id=restored_msgid,
+                      body = {'addLabelIds': labelIds})
+                  if response == None:
+                    continue
+                  exception = None
+                except googleapiclient.errors.HttpError as e:
+                  response = None
+                  exception = e
+              else:
+                response, exception = None, None
               if len(imap_labels) > 0:
                 labels_string = '("'+'" "'.join(imap_labels)+'")'
                 r, d = imapconn.uid('STORE', str(restored_uid), '+X-GM-LABELS', labels_string)
@@ -1506,9 +1536,13 @@ def main(argv):
               print('\nsocket.error:%s, retrying...' % e)
               imapconn = gimaplib.ImapConnect(generateXOAuthString(options.email, options.service_account), options.debug)
               imapconn.select(ALL_MAIL)
+          #Save the fact that it is completed
+          restored_message(request_id=request_id, response=response,
+            exception=None)
+          sqlconn.commit()
+    sqlconn.execute('DETACH mbox_resume')
+    sqlconn.commit()
     imapconn.logout()
-    print('\n')
-    sys.exit(0)
 
   # RESTORE-GROUP #
   elif options.action == 'restore-group':
