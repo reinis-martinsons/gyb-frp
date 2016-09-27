@@ -182,6 +182,11 @@ method breaks Gmail deduplication and threading.')
     action='store_true',
     default=False,
     help='Optional: On restore-mbox, use IMAP protocol')
+  parser.add_argument('--move',
+    dest='move',
+    action='store_true',
+    default=False,
+    help='Optional: On restore, delete messages from local backup')
   parser.add_argument('--debug',
     action='store_true',
     dest='debug',
@@ -874,6 +879,15 @@ def restored_message(request_id, response, exception):
     sqlconn.execute(
       '''INSERT OR IGNORE INTO restored_messages (message_num) VALUES (?)''',
       (request_id,))
+    if options.move:
+      sqlcur.execute(
+        '''SELECT message_num, message_filename, message_internaldate FROM messages
+        WHERE message_num = (?)''', (request_id,))
+      backup_record_original = (sqlcur.fetchone())
+      sqlcur.execute(
+         '''REPLACE INTO messages (message_num, message_filename, message_internaldate, moved_to)
+         VALUES (?, ?, ?, ?)''', (backup_record_original + (options.email,)))
+      sqlconn.commit()
 
 def purged_message(request_id, response, exception):
   if exception is not None:
@@ -1165,6 +1179,11 @@ def main(argv):
         pass
       except IOError:
         pass
+    if options.move:
+      sqlcur.execute('select * from messages')
+      if 'moved_to' not in [member[0] for member in sqlcur.description]:
+        sqlcur.execute('ALTER TABLE messages ADD COLUMN moved_to TEXT;')
+      sqlconn.commit()
     sqlcur.execute('ATTACH ? as resume', (resumedb,))
     sqlcur.executescript('''CREATE TABLE IF NOT EXISTS resume.restored_messages 
                         (message_num INTEGER PRIMARY KEY); 
