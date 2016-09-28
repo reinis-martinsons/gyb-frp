@@ -1175,8 +1175,8 @@ def main(argv):
         (refreshed_messages, refresh_count))
     print("\n")
 
-  # RESTORE #
-  elif options.action == 'restore':
+  # RESTORE(GAPI) #
+  elif options.action == 'restore' and not options.use_imap:
     if options.batch_size == 0:
       options.batch_size = 10
     resumedb = os.path.join(options.local_folder, 
@@ -1248,6 +1248,152 @@ def main(argv):
         for restore_label in options.label_restored:
           labels.append(restore_label)
       labelIds = labelsToLabelIds(labels)
+      body = {'labelIds': labelIds}
+      b64_message_size = (len(full_message)/3) * 4
+      if b64_message_size > 1 * 1024 * 1024 or options.batch_size == 1:
+        # don't batch/raw >1mb messages, just do single
+        rewrite_line('restoring single large message (%s/%s)' %
+          (current, restore_count))
+        # Note resumable=True is important here, it prevents errors on (bad)
+        # messages that should be ASCII but contain extended chars.
+        # What's that? No, no idea why
+        media_body = googleapiclient.http.MediaInMemoryUpload(full_message,
+          mimetype='message/rfc822', resumable=True, chunksize=chunksize)
+        try:
+          response = callGAPI(service=restore_serv, function=restore_func,
+            userId='me', throw_reasons=['invalidArgument',], media_body=media_body, body=body,
+            deleted=options.vault, soft_errors=True, **restore_params)
+          exception = None
+        except googleapiclient.errors.HttpError as e:
+          response = None
+          exception = e
+        restored_message(request_id=str(message_num), response=response,
+          exception=exception)
+        rewrite_line('restored single large message (%s/%s)' % (current,
+          restore_count))
+        continue
+      if b64_message_size > largest_in_batch:
+        largest_in_batch = b64_message_size
+      raw_message = base64.urlsafe_b64encode(full_message).decode('utf-8')
+      body['raw'] = raw_message
+      current_batch_bytes += len(raw_message)
+      for labelId in labelIds:
+        current_batch_bytes += len(labelId)
+      if len(gbatch._order) > 0 and current_batch_bytes > max_batch_bytes:
+        # this message would put us over max, execute current batch first
+        rewrite_line("restoring %s messages (%s/%s)" % (len(gbatch._order),
+          current, restore_count))
+        callGAPI(gbatch, None, soft_errors=True)
+        gbatch = googleapiclient.http.BatchHttpRequest()
+        sqlconn.commit()
+        current_batch_bytes = 5000
+        largest_in_batch = 0
+      gbatch.add(restore_method(userId='me',
+        body=body, fields='id', deleted=options.vault,
+        **restore_params), callback=restored_message,
+          request_id=str(message_num))
+      if len(gbatch._order) == options.batch_size:
+        rewrite_line("restoring %s messages (%s/%s)" % (len(gbatch._order),
+          current, restore_count))
+        callGAPI(gbatch, None, soft_errors=True)
+        gbatch = googleapiclient.http.BatchHttpRequest()
+        sqlconn.commit()
+        current_batch_bytes = 5000
+        largest_in_batch = 0
+    if len(gbatch._order) > 0:
+      rewrite_line("restoring %s messages (%s/%s)" % (len(gbatch._order),
+        current, restore_count))
+      callGAPI(gbatch, None, soft_errors=True)
+      sqlconn.commit()
+    if not options.move:
+      print("\n")
+    sqlconn.execute('DETACH resume')
+    sqlconn.commit()
+
+  # RESTORE(IMAP) #
+  elif options.action == 'restore' and options.use_imap:
+#    if options.batch_size == 0:
+#      options.batch_size = 10
+    imapconn.select(options.use_folder)
+    resumedb = os.path.join(options.local_folder, 
+                            "%s-restored.sqlite" % options.email)
+    if options.noresume:
+      try:
+        os.remove(resumedb)
+      except OSError:
+        pass
+      except IOError:
+        pass
+    if options.move:
+      sqlcur.execute('select * from messages')
+      if 'moved_to' not in [member[0] for member in sqlcur.description]:
+        sqlcur.execute('ALTER TABLE messages ADD COLUMN moved_to TEXT;')
+        sqlconn.commit()
+    sqlcur.execute('ATTACH ? as resume', (resumedb,))
+    sqlcur.executescript('''CREATE TABLE IF NOT EXISTS resume.restored_messages 
+                        (message_num INTEGER PRIMARY KEY); 
+                        CREATE TEMP TABLE skip_messages (message_num INTEGER \
+                          PRIMARY KEY);''')
+    sqlcur.execute('''INSERT INTO skip_messages SELECT message_num from \
+      restored_messages''')
+    if options.move:
+      sqlcur.execute('''INSERT OR IGNORE INTO skip_messages SELECT message_num from \
+      messages WHERE moved_to IS NOT NULL''')
+    sqlcur.execute('''SELECT message_num, message_internaldate, \
+      message_filename FROM messages
+                      WHERE message_num NOT IN skip_messages ORDER BY \
+                      message_internaldate DESC''') # All messages
+
+#    restore_serv = gmail.users().messages()
+#    if options.fast_restore:
+#      restore_func = 'insert'
+#      restore_params = {'internalDateSource': 'dateHeader'}
+#    else:
+#      restore_func = 'import_'
+#      restore_params = {'neverMarkSpam': True}
+#    restore_method = getattr(restore_serv, restore_func)
+    messages_to_restore_results = sqlcur.fetchall()
+    restore_count = len(messages_to_restore_results)
+    current = 0
+#    gbatch = googleapiclient.http.BatchHttpRequest()
+#    max_batch_bytes = 8 * 1024 * 1024
+#    current_batch_bytes = 5000 # accounts for metadata
+#    largest_in_batch = 0
+    for x in messages_to_restore_results:
+      current += 1
+      message_filename = x[2]
+      message_num = x[0]
+      if not os.path.isfile(os.path.join(options.local_folder,
+        message_filename)):
+        print('WARNING! file %s does not exist for message %s'
+          % (os.path.join(options.local_folder, message_filename),
+            message_num))
+        print('  this message will be skipped.')
+        continue
+      f = open(os.path.join(options.local_folder, message_filename), 'rb')
+      full_message = f.read()
+      f.close()
+      labels = []
+      if not options.strip_labels:
+        sqlcur.execute('SELECT DISTINCT label FROM labels WHERE message_num \
+          = ?', (message_num,))
+        labels_results = sqlcur.fetchall()
+        for l in labels_results:
+          labels.append(l[0])
+      if options.label_restored:
+        for restore_label in options.label_restored:
+          labels.append(restore_label)
+      imap_labels = []
+      gapi_labels = []
+      for label in labels:
+        if label == 'SENT':
+          imap_labels.append('\\\\Sent')
+        elif label == 'DRAFT':
+           imap_labels.append('\\\\Draft')
+        else:
+           gapi_labels.append(label)
+#      labelIds = labelsToLabelIds(labels)
+      labelIds = labelsToLabelIds(gapi_labels)
       body = {'labelIds': labelIds}
       b64_message_size = (len(full_message)/3) * 4
       if b64_message_size > 1 * 1024 * 1024 or options.batch_size == 1:
