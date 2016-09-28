@@ -1076,7 +1076,10 @@ def main(argv):
   if options.action not in ['count', 'purge', 'purge-labels',
     'quota', 'revoke']:
     if options.action not in ['estimate'] or os.path.isfile(sqldbfile):
-      print("\nUsing backup folder %s" % options.local_folder)
+      if not options.move:
+        print("\nUsing backup folder %s" % options.local_folder)
+      else:
+        rewrite_line("Moving from backup folder %s" % options.local_folder)
       global sqlconn
       global sqlcur
       sqlconn = sqlite3.connect(sqldbfile,
@@ -1302,7 +1305,8 @@ def main(argv):
         current, restore_count))
       callGAPI(gbatch, None, soft_errors=True)
       sqlconn.commit()
-    print("\n")
+    if not options.move:
+      print("\n")
     sqlconn.execute('DETACH resume')
     sqlconn.commit()
 
@@ -1795,6 +1799,7 @@ otaBytesByService,quotaType')
         (bytes_to_larger(message_size_estimate), estimated_messages,
         estimate_count))
     print('\n')
+  return options.move
 
 if __name__ == '__main__':
   if sys.version_info[0] < 3 or sys.version_info[1] < 4:
@@ -1802,7 +1807,9 @@ if __name__ == '__main__':
     sys.exit(3)
   doGYBCheckForUpdates()
   try:
-    main(sys.argv[1:])
+    if main(sys.argv[1:]):
+      while True:
+        main(sys.argv[1:])
   except KeyboardInterrupt:
     try:
       sqlconn.commit()
