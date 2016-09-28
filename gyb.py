@@ -888,6 +888,12 @@ def restored_message(request_id, response, exception):
          '''REPLACE INTO messages (message_num, message_filename, message_internaldate, moved_to)
          VALUES (?, ?, ?, ?)''', (backup_record_original + (options.email,)))
       sqlconn.commit()
+      try:
+        os.remove(os.path.join(options.local_folder, backup_record_original[1]))
+      except OSError:
+        pass
+      except IOError:
+        pass
 
 def purged_message(request_id, response, exception):
   if exception is not None:
@@ -1183,7 +1189,7 @@ def main(argv):
       sqlcur.execute('select * from messages')
       if 'moved_to' not in [member[0] for member in sqlcur.description]:
         sqlcur.execute('ALTER TABLE messages ADD COLUMN moved_to TEXT;')
-      sqlconn.commit()
+        sqlconn.commit()
     sqlcur.execute('ATTACH ? as resume', (resumedb,))
     sqlcur.executescript('''CREATE TABLE IF NOT EXISTS resume.restored_messages 
                         (message_num INTEGER PRIMARY KEY); 
@@ -1191,6 +1197,9 @@ def main(argv):
                           PRIMARY KEY);''')
     sqlcur.execute('''INSERT INTO skip_messages SELECT message_num from \
       restored_messages''')
+    if options.move:
+      sqlcur.execute('''INSERT OR IGNORE INTO skip_messages SELECT message_num from \
+      messages WHERE moved_to IS NOT NULL''')
     sqlcur.execute('''SELECT message_num, message_internaldate, \
       message_filename FROM messages
                       WHERE message_num NOT IN skip_messages ORDER BY \
