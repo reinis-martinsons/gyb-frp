@@ -1363,6 +1363,8 @@ def main(argv):
       current += 1
       message_filename = x[2]
       message_num = x[0]
+      message_internaldate = x[1]
+      message_internaldate_seconds = time.mktime(message_internaldate.timetuple())
       if not os.path.isfile(os.path.join(options.local_folder,
         message_filename)):
         print('WARNING! file %s does not exist for message %s'
@@ -1394,62 +1396,61 @@ def main(argv):
            gapi_labels.append(label)
 #      labelIds = labelsToLabelIds(labels)
       labelIds = labelsToLabelIds(gapi_labels)
-      body = {'labelIds': labelIds}
-      b64_message_size = (len(full_message)/3) * 4
-      if b64_message_size > 1 * 1024 * 1024 or options.batch_size == 1:
-        # don't batch/raw >1mb messages, just do single
-        rewrite_line('restoring single large message (%s/%s)' %
-          (current, restore_count))
-        # Note resumable=True is important here, it prevents errors on (bad)
-        # messages that should be ASCII but contain extended chars.
-        # What's that? No, no idea why
-        media_body = googleapiclient.http.MediaInMemoryUpload(full_message,
-          mimetype='message/rfc822', resumable=True, chunksize=chunksize)
+#      body = {'labelIds': labelIds}
+#      b64_message_size = (len(full_message)/3) * 4
+#      if b64_message_size > 1 * 1024 * 1024 or options.batch_size == 1:
+#        # don't batch/raw >1mb messages, just do single
+#        rewrite_line('restoring single large message (%s/%s)' %
+#          (current, restore_count))
+#        # Note resumable=True is important here, it prevents errors on (bad)
+#        # messages that should be ASCII but contain extended chars.
+#        # What's that? No, no idea why
+#        media_body = googleapiclient.http.MediaInMemoryUpload(full_message,
+#          mimetype='message/rfc822', resumable=True, chunksize=chunksize)
+      while True:
         try:
-          response = callGAPI(service=restore_serv, function=restore_func,
-            userId='me', throw_reasons=['invalidArgument',], media_body=media_body, body=body,
-            deleted=options.vault, soft_errors=True, **restore_params)
-          exception = None
-        except googleapiclient.errors.HttpError as e:
-          response = None
-          exception = e
-        restored_message(request_id=str(message_num), response=response,
-          exception=exception)
-        rewrite_line('restored single large message (%s/%s)' % (current,
-          restore_count))
-        continue
-      if b64_message_size > largest_in_batch:
-        largest_in_batch = b64_message_size
-      raw_message = base64.urlsafe_b64encode(full_message).decode('utf-8')
-      body['raw'] = raw_message
-      current_batch_bytes += len(raw_message)
-      for labelId in labelIds:
-        current_batch_bytes += len(labelId)
-      if len(gbatch._order) > 0 and current_batch_bytes > max_batch_bytes:
-        # this message would put us over max, execute current batch first
-        rewrite_line("restoring %s messages (%s/%s)" % (len(gbatch._order),
-          current, restore_count))
-        callGAPI(gbatch, None, soft_errors=True)
-        gbatch = googleapiclient.http.BatchHttpRequest()
-        sqlconn.commit()
-        current_batch_bytes = 5000
-        largest_in_batch = 0
-      gbatch.add(restore_method(userId='me',
-        body=body, fields='id', deleted=options.vault,
-        **restore_params), callback=restored_message,
-          request_id=str(message_num))
-      if len(gbatch._order) == options.batch_size:
-        rewrite_line("restoring %s messages (%s/%s)" % (len(gbatch._order),
-          current, restore_count))
-        callGAPI(gbatch, None, soft_errors=True)
-        gbatch = googleapiclient.http.BatchHttpRequest()
-        sqlconn.commit()
-        current_batch_bytes = 5000
-        largest_in_batch = 0
-    if len(gbatch._order) > 0:
-      rewrite_line("restoring %s messages (%s/%s)" % (len(gbatch._order),
-        current, restore_count))
-      callGAPI(gbatch, None, soft_errors=True)
+          r, d = imapconn.append(b'\"' + options.use_folder.encode() + b'\"', '\Seen', message_internaldate_seconds, full_message)
+          if r != 'OK':
+            print('\nError: %s %s' % (r,d))
+            sys.exit(5)
+          try:
+            restored_uid = int(re.search('^[APPENDUID [0-9]* ([0-9]*)] \(Success\)$', d[0].decode()).group(1))
+          except AttributeError:
+            print('\nerror retrieving uid: %s: retrying...' % d)
+            time.sleep(3)
+            imapconn = gimaplib.ImapConnect(generateXOAuthString(options.email, options.service_account), options.debug)
+            imapconn.select(ALL_MAIL)
+          t, d = imapconn.uid('FETCH', str(restored_uid), '(X-GM-MSGID)')
+          restored_msgid = hex(int(re.search('\(X-GM-MSGID ([0-9]*)', d[-1].decode()).group(1)))[2:]
+          if len(labelIds) > 0:
+            try:
+              response = callGAPI(service=gmail.users().messages(), function='modify', userId='me', id=restored_msgid,
+                  body = {'addLabelIds': labelIds})
+              if response == None:
+                continue
+              exception = None
+            except googleapiclient.errors.HttpError as e:
+              response = None
+              exception = e
+            else:
+              response, exception = None, None
+            if len(imap_labels) > 0:
+              labels_string = '("'+'" "'.join(imap_labels)+'")'
+              r, d = imapconn.uid('STORE', str(restored_uid), '+X-GM-LABELS', labels_string)
+              if r != 'OK':
+                print('\nGImap Set Message Labels Failed: %s %s' % (r, d))
+                sys.exit(33)
+            break
+        except imaplib.IMAP4.abort as e:
+          print('\nimaplib.abort error:%s, retrying...' % e)
+          imapconn = gimaplib.ImapConnect(generateXOAuthString(options.email, options.service_account), options.debug)
+          imapconn.select(ALL_MAIL)
+        except socket.error as e:
+          print('\nsocket.error:%s, retrying...' % e)
+          imapconn = gimaplib.ImapConnect(generateXOAuthString(options.email, options.service_account), options.debug)
+          imapconn.select(ALL_MAIL)
+      #Save the fact that it is completed
+      restored_message(request_id=message, response=response, exception=None)
       sqlconn.commit()
     if not options.move:
       print("\n")
