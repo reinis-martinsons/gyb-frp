@@ -1314,7 +1314,7 @@ def main(argv):
   elif options.action == 'restore' and options.use_imap:
 #    if options.batch_size == 0:
 #      options.batch_size = 10
-    imapconn.select(options.use_folder)
+    imapconn.select(b'\"' + options.use_folder.encode() + b'\"')
     resumedb = os.path.join(options.local_folder, 
                             "%s-restored.sqlite" % options.email)
     if options.noresume:
@@ -1450,7 +1450,7 @@ def main(argv):
           imapconn = gimaplib.ImapConnect(generateXOAuthString(options.email, options.service_account), options.debug)
           imapconn.select(ALL_MAIL)
       #Save the fact that it is completed
-      restored_message(request_id=message, response=response, exception=None)
+      restored_message(request_id=message_num, response=response, exception=None)
       sqlconn.commit()
     if not options.move:
       print("\n")
