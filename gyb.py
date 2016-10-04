@@ -1355,7 +1355,7 @@ def main(argv):
       message_internaldate = x[1]
       message_timestamp = x[3]
 #      message_internaldate_seconds = time.mktime(message_internaldate.timetuple())
-      message_internaldate_seconds = fload(message_timestamp)
+      message_internaldate_seconds = float(message_timestamp)
       if not os.path.isfile(os.path.join(options.local_folder,
         message_filename)):
         print('WARNING! file %s does not exist for message %s'
@@ -1654,7 +1654,8 @@ def main(argv):
           del message[u'X-Gmail-Labels']
           del message[u'X-GM-THRID']
           msg_account, internal_datetime = message.get_from().split(' ', 1)
-          internal_datetime_seconds = time.mktime(email.utils.parsedate(internal_datetime))
+#          internal_datetime_seconds = time.mktime(email.utils.parsedate(internal_datetime))
+          internal_datetime_seconds = float(email.utils.mktime_tz(email.utils.parsedate_tz(internal_datetime)))
           rewrite_line(' message %s of %s' %
             (current, restore_count))
           full_message = message.as_bytes()
@@ -1944,3 +1945,16 @@ if __name__ == '__main__':
     except NameError:
       pass
     sys.exit(4)
+
+
+
+
+
+#imapconn = gyb.gimaplib.ImapConnect(gyb.generateXOAuthString(options.email, options.service_account), options.debug)
+#visi = '1:' + imapconn.select(b'\"' + options.use_folder.encode() + b'\"')[1][0].decode()
+#t, d = imapconn.fetch(visi, '(X-GM-MSGID INTERNALDATE)')
+#datumi={}
+#for x in d:
+#  msg_id = hex(int(gyb.re.search('X-GM-MSGID ([0-9]*)', x.decode()).group(1)))[2:]
+#  msg_intdate = gyb.re.search('INTERNALDATE \"(.+?)\"', x.decode()).group(1)
+#  datumi[msg_id] = msg_intdate
