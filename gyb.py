@@ -766,7 +766,8 @@ def initializeDB(sqlcur, sqlconn, email):
   sqlcur.executescript('''
    CREATE TABLE messages(message_num INTEGER PRIMARY KEY, 
                          message_filename TEXT, 
-                         message_internaldate TIMESTAMP);
+                         message_internaldate TIMESTAMP,
+                         message_timestamp INTEGER);
    CREATE TABLE labels (message_num INTEGER, label TEXT);
    CREATE TABLE uids (message_num INTEGER, uid TEXT PRIMARY KEY);
    CREATE TABLE settings (name TEXT PRIMARY KEY, value TEXT);
@@ -881,12 +882,12 @@ def restored_message(request_id, response, exception):
       (request_id,))
     if options.move:
       sqlcur.execute(
-        '''SELECT message_num, message_filename, message_internaldate FROM messages
+        '''SELECT message_num, message_filename, message_internaldate, message_timestamp FROM messages
         WHERE message_num = (?)''', (request_id,))
       backup_record_original = (sqlcur.fetchone())
       sqlcur.execute(
-         '''REPLACE INTO messages (message_num, message_filename, message_internaldate, moved_to)
-         VALUES (?, ?, ?, ?)''', (backup_record_original + (options.email,)))
+         '''REPLACE INTO messages (message_num, message_filename, message_internaldate, message_timestamp, moved_to)
+         VALUES (?, ?, ?, ?, ?)''', (backup_record_original + (options.email,)))
       sqlconn.commit()
       try:
         os.remove(os.path.join(options.local_folder, backup_record_original[1]))
@@ -941,9 +942,11 @@ def backup_message(request_id, response, exception):
     sqlcur.execute("""
              INSERT INTO messages (
                          message_filename, 
-                         message_internaldate) VALUES (?, ?)""",
+                         message_internaldate,
+                         message_timestamp   ) VALUES (?, ?, ?)""",
                         (message_rel_filename,
-                         time_for_sqlite))
+                         time_for_sqlite,
+                         message_time))
     message_num = sqlcur.lastrowid
     sqlcur.execute("""
              REPLACE INTO uids (message_num, uid) VALUES (?, ?)""",
@@ -1189,7 +1192,7 @@ def main(argv):
       except IOError:
         pass
     if options.move:
-      sqlcur.execute('select * from messages')
+      sqlcur.execute('SELECT * FROM messages')
       if 'moved_to' not in [member[0] for member in sqlcur.description]:
         sqlcur.execute('ALTER TABLE messages ADD COLUMN moved_to TEXT;')
         sqlconn.commit()
@@ -1312,8 +1315,6 @@ def main(argv):
 
   # RESTORE(IMAP) #
   elif options.action == 'restore' and options.use_imap:
-#    if options.batch_size == 0:
-#      options.batch_size = 10
     imapconn.select(b'\"' + options.use_folder.encode() + b'\"')
     resumedb = os.path.join(options.local_folder, 
                             "%s-restored.sqlite" % options.email)
@@ -1325,7 +1326,7 @@ def main(argv):
       except IOError:
         pass
     if options.move:
-      sqlcur.execute('select * from messages')
+      sqlcur.execute('SELECT * FROM messages')
       if 'moved_to' not in [member[0] for member in sqlcur.description]:
         sqlcur.execute('ALTER TABLE messages ADD COLUMN moved_to TEXT;')
         sqlconn.commit()
@@ -1340,31 +1341,21 @@ def main(argv):
       sqlcur.execute('''INSERT OR IGNORE INTO skip_messages SELECT message_num from \
       messages WHERE moved_to IS NOT NULL''')
     sqlcur.execute('''SELECT message_num, message_internaldate, \
-      message_filename FROM messages
+      message_filename, message_timestamp FROM messages
                       WHERE message_num NOT IN skip_messages ORDER BY \
                       message_internaldate DESC''') # All messages
 
-#    restore_serv = gmail.users().messages()
-#    if options.fast_restore:
-#      restore_func = 'insert'
-#      restore_params = {'internalDateSource': 'dateHeader'}
-#    else:
-#      restore_func = 'import_'
-#      restore_params = {'neverMarkSpam': True}
-#    restore_method = getattr(restore_serv, restore_func)
     messages_to_restore_results = sqlcur.fetchall()
     restore_count = len(messages_to_restore_results)
     current = 0
-#    gbatch = googleapiclient.http.BatchHttpRequest()
-#    max_batch_bytes = 8 * 1024 * 1024
-#    current_batch_bytes = 5000 # accounts for metadata
-#    largest_in_batch = 0
     for x in messages_to_restore_results:
       current += 1
       message_filename = x[2]
       message_num = x[0]
       message_internaldate = x[1]
-      message_internaldate_seconds = time.mktime(message_internaldate.timetuple())
+      message_timestamp = x[3]
+#      message_internaldate_seconds = time.mktime(message_internaldate.timetuple())
+      message_internaldate_seconds = fload(message_timestamp)
       if not os.path.isfile(os.path.join(options.local_folder,
         message_filename)):
         print('WARNING! file %s does not exist for message %s'
@@ -1394,19 +1385,7 @@ def main(argv):
            imap_labels.append('\\\\Draft')
         else:
            gapi_labels.append(label)
-#      labelIds = labelsToLabelIds(labels)
       labelIds = labelsToLabelIds(gapi_labels)
-#      body = {'labelIds': labelIds}
-#      b64_message_size = (len(full_message)/3) * 4
-#      if b64_message_size > 1 * 1024 * 1024 or options.batch_size == 1:
-#        # don't batch/raw >1mb messages, just do single
-#        rewrite_line('restoring single large message (%s/%s)' %
-#          (current, restore_count))
-#        # Note resumable=True is important here, it prevents errors on (bad)
-#        # messages that should be ASCII but contain extended chars.
-#        # What's that? No, no idea why
-#        media_body = googleapiclient.http.MediaInMemoryUpload(full_message,
-#          mimetype='message/rfc822', resumable=True, chunksize=chunksize)
       while True:
         try:
           r, d = imapconn.append(b'\"' + options.use_folder.encode() + b'\"', '\Seen', message_internaldate_seconds, full_message)
