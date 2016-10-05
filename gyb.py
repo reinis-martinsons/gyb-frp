@@ -68,6 +68,8 @@ import googleapiclient.discovery
 import googleapiclient.errors
 import gimaplib
 
+X_GM_Msgid = re.compile(br'.*X-GM-MSGID ([0-9]*)')
+
 if os.name == 'windows' or os.name == 'nt':
   path_divider = '\\'
 else:
@@ -973,6 +975,32 @@ def bytes_to_larger(myval):
     mysize = 'tb'
   return '%.2f%s' % (myval, mysize)
 
+def msgids_to_imap_dates(imapconn, exists):
+  import calendar
+  r, d = imapconn.fetch('1:' + exists, '(X-GM-MSGID INTERNALDATE)')
+  imap_dates = {}
+  for id in d:
+#    msgid = hex(int(re.search('X-GM-MSGID ([0-9]*)', id.decode()).group(1)))[2:]
+    msgid = hex(int(X_GM_Msgid.match(id.decode()).group(1)))[2:]
+#    msg_internaldate = re.search('INTERNALDATE \"(.+?)\"', id.decode()).group(1)
+    mo = InternalDate.match(id.decode())
+    mon = imaplib.Mon2num[mo.group('mon')]
+    zonen = mo.group('zonen')
+    day = int(mo.group('day'))
+    year = int(mo.group('year'))
+    hour = int(mo.group('hour'))
+    min = int(mo.group('min'))
+    sec = int(mo.group('sec'))
+    zoneh = int(mo.group('zoneh'))
+    zonem = int(mo.group('zonem'))
+    zone = (zoneh*60 + zonem)*60
+    if zonen == b'-':
+      zone = -zone
+    tt = (year, mon, day, hour, min, sec, -1, -1, -1)
+    utc = calendar.timegm(tt) - zone
+    imap_dates[msgid] = utc
+  return imap_dates
+
 def main(argv):
   global options, gmail
   options = SetupOptionParser(argv)
@@ -997,6 +1025,7 @@ def main(argv):
     if r == 'NO':
       print("Error: Cannot select the Gmail \"All Mail\" folder. Please make sure it is not hidden from IMAP.")
       sys.exit(3)
+    exists = d[0].decode()
     uidvalidity = imapconn.response('UIDVALIDITY')[1][0]
   if os.path.isfile(getProgPath()+'reserved_translation.txt'):
     with open(getProgPath()+'reserved_translation.txt', encoding="utf-8") as f:
@@ -1105,6 +1134,8 @@ def main(argv):
 
   # BACKUP #
   if options.action == 'backup':
+    if options.use_imap:
+      imap_dates = msgids_to_imap_dates(imapconn, exists)
     if options.batch_size == 0:
       options.batch_size = 100
     page_message = 'Got %%total_items%% Message IDs'
