@@ -925,6 +925,10 @@ def backup_message(request_id, response, exception):
     message_time = int(response['internalDate'])/1000
     message_date = time.gmtime(message_time)
     time_for_sqlite = datetime.datetime.fromtimestamp(message_time)
+    if options.use_imap:
+      message_timestamp = imap_dates[(response['id'])]
+    else:
+      message_timestamp = message_time
     message_rel_path = os.path.join(str(message_date.tm_year),
                                     str(message_date.tm_mon),
                                     str(message_date.tm_mday))
@@ -948,7 +952,7 @@ def backup_message(request_id, response, exception):
                          message_timestamp   ) VALUES (?, ?, ?)""",
                         (message_rel_filename,
                          time_for_sqlite,
-                         message_time))
+                         message_timestamp))
     message_num = sqlcur.lastrowid
     sqlcur.execute("""
              REPLACE INTO uids (message_num, uid) VALUES (?, ?)""",
@@ -980,10 +984,8 @@ def msgids_to_imap_dates(imapconn, exists):
   r, d = imapconn.fetch('1:' + exists, '(X-GM-MSGID INTERNALDATE)')
   imap_dates = {}
   for id in d:
-#    msgid = hex(int(re.search('X-GM-MSGID ([0-9]*)', id.decode()).group(1)))[2:]
-    msgid = hex(int(X_GM_Msgid.match(id.decode()).group(1)))[2:]
-#    msg_internaldate = re.search('INTERNALDATE \"(.+?)\"', id.decode()).group(1)
-    mo = InternalDate.match(id.decode())
+    msgid = hex(int(X_GM_Msgid.match(id).group(1)))[2:]
+    mo = imaplib.InternalDate.match(id)
     mon = imaplib.Mon2num[mo.group('mon')]
     zonen = mo.group('zonen')
     day = int(mo.group('day'))
@@ -1135,6 +1137,7 @@ def main(argv):
   # BACKUP #
   if options.action == 'backup':
     if options.use_imap:
+      global imap_dates
       imap_dates = msgids_to_imap_dates(imapconn, exists)
     if options.batch_size == 0:
       options.batch_size = 100
