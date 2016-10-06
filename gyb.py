@@ -194,6 +194,9 @@ method breaks Gmail deduplication and threading.')
     action='store_true',
     default=False,
     help='Optional: On restore, add parent label corresponding to the email')
+  parser.add_argument('--mbox-email',
+    dest='mbox_email',
+    help='Full email address for mbox files for --label-parent option')
   parser.add_argument('--debug',
     action='store_true',
     dest='debug',
@@ -1426,7 +1429,7 @@ def main(argv):
            imap_labels.append('\\\\Draft')
         else:
            gapi_labels.append(label)
-        if options.label_parent and label not in options.label_restored:
+        if options.label_parent and label not in [options.label_restored, list()][options.label_restored == None]:
            gapi_labels.append(db_settings['email_address'] + '/' + label)
       labelIds = labelsToLabelIds(gapi_labels)
       rewrite_line(" message %s of %s" % (current, restore_count))
@@ -1675,10 +1678,14 @@ def main(argv):
               labels.append(restore_label)
           cased_labels = []
           imap_labels = labels[:]
+          if options.label_parent and options.mbox_email:
+            cased_labels.append(options.mbox_email)
           for label in labels:
             imap_labels.remove(label)
             if label.lower() in reserved_labels_translation:
-              label = reserved_labels_translation[label.lower()]
+              label = reserved_labels_translation[label.lower()].upper()
+            if options.label_parent and label not in [options.label_restored, list()][options.label_restored == None] and options.mbox_email:
+              cased_labels.append(options.mbox_email + '/' + label)
             if label.lower() in reserved_labels:
               label = label.upper()
               if label in ['CHAT', 'CHATS']:
