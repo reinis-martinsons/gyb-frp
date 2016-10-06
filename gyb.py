@@ -189,6 +189,11 @@ method breaks Gmail deduplication and threading.')
     action='store_true',
     default=False,
     help='Optional: On restore, delete messages from local backup')
+  parser.add_argument('--label-parent',
+    dest='label_parent',
+    action='store_true',
+    default=False,
+    help='Optional: On restore, add parent label corresponding to the email')
   parser.add_argument('--debug',
     action='store_true',
     dest='debug',
@@ -1412,6 +1417,8 @@ def main(argv):
           labels.append(restore_label)
       imap_labels = []
       gapi_labels = []
+      if options.label_parent:
+        gapi_labels.append(db_settings['email_address'])
       for label in labels:
         if label == 'SENT':
           imap_labels.append('\\\\Sent')
@@ -1419,7 +1426,10 @@ def main(argv):
            imap_labels.append('\\\\Draft')
         else:
            gapi_labels.append(label)
+        if options.label_parent and label not in options.label_restored:
+           gapi_labels.append(db_settings['email_address'] + '/' + label)
       labelIds = labelsToLabelIds(gapi_labels)
+      rewrite_line(" message %s of %s" % (current, restore_count))
       while True:
         try:
           r, d = imapconn.append(b'\"' + options.use_folder.encode() + b'\"', '\Seen', message_internaldate_seconds, full_message)
@@ -1445,15 +1455,15 @@ def main(argv):
             except googleapiclient.errors.HttpError as e:
               response = None
               exception = e
-            else:
-              response, exception = None, None
-            if len(imap_labels) > 0:
-              labels_string = '("'+'" "'.join(imap_labels)+'")'
-              r, d = imapconn.uid('STORE', str(restored_uid), '+X-GM-LABELS', labels_string)
-              if r != 'OK':
-                print('\nGImap Set Message Labels Failed: %s %s' % (r, d))
-                sys.exit(33)
-            break
+          else:
+            response, exception = None, None
+          if len(imap_labels) > 0:
+            labels_string = '("'+'" "'.join(imap_labels)+'")'
+            r, d = imapconn.uid('STORE', str(restored_uid), '+X-GM-LABELS', labels_string)
+            if r != 'OK':
+              print('\nGImap Set Message Labels Failed: %s %s' % (r, d))
+              sys.exit(33)
+          break
         except imaplib.IMAP4.abort as e:
           print('\nimaplib.abort error:%s, retrying...' % e)
           imapconn = gimaplib.ImapConnect(generateXOAuthString(options.email, options.service_account), options.debug)
