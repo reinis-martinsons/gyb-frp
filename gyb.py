@@ -1702,8 +1702,25 @@ def main(argv):
             else:
               cased_labels.append(label)
           labelIds = labelsToLabelIds(cased_labels)
-          del message[u'X-Gmail-Labels']
-          del message[u'X-GM-THRID']
+          del message['X-Gmail-Labels']
+          del message['X-GM-THRID']
+          if options.label_parent and options.mbox_email:
+            if message['Message-ID']:
+              message.replace_header('Message-ID', '<' + options.mbox_email.split('@')[0] + '.' + options.mbox_email.split('@')[1] + '.' + message['Message-ID'][1:])
+#              print('Message-ID: ', message['Message-ID'])
+              if message['In-Reply-To']:
+                in_reply_to_list = []
+                for in_reply_to in message['In-Reply-To'].split():
+                  in_reply_to_list.append('<' + options.mbox_email.split('@')[0] + '.' + options.mbox_email.split('@')[1] + '.' + in_reply_to[1:])
+                message.replace_header('In-Reply-To', ' '.join(in_reply_to_list))
+#                print('In-Reply-To: ', message['In-Reply-To'])
+              if message['References']:
+                references_list = []
+                for references in message['References'].split():
+                  references_list.append('<' + options.mbox_email.split('@')[0] + '.' + options.mbox_email.split('@')[1] + '.' + references[1:])
+                message.replace_header('References', ' '.join(references_list))
+#                print('References: ', message['References'])
+#            continue
           msg_account, internal_datetime = message.get_from().split(' ', 1)
 #          internal_datetime_seconds = time.mktime(email.utils.parsedate(internal_datetime))
           internal_datetime_seconds = float(email.utils.mktime_tz(email.utils.parsedate_tz(internal_datetime)))
