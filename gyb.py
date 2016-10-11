@@ -1396,7 +1396,6 @@ def main(argv):
       message_num = x[0]
       message_internaldate = x[1]
       message_timestamp = x[3]
-#      message_internaldate_seconds = time.mktime(message_internaldate.timetuple())
       message_internaldate_seconds = float(message_timestamp)
       if not os.path.isfile(os.path.join(options.local_folder,
         message_filename)):
@@ -1406,7 +1405,8 @@ def main(argv):
         print('  this message will be skipped.')
         continue
       f = open(os.path.join(options.local_folder, message_filename), 'rb')
-      full_message = f.read()
+#      full_message = f.read()
+      message = email.message_from_binary_file(f)
       f.close()
       labels = []
       if not options.strip_labels:
@@ -1432,6 +1432,20 @@ def main(argv):
         if options.label_parent and label not in [options.label_restored, list()][options.label_restored == None]:
            gapi_labels.append(db_settings['email_address'] + '/' + label)
       labelIds = labelsToLabelIds(gapi_labels)
+      if options.label_parent:
+        if message['Message-ID']:
+          message.replace_header('Message-ID', '<' + db_settings['email_address'].split('@')[0] + '.' + db_settings['email_address'].split('@')[1] + '.' + message['Message-ID'][1:])
+          if message['In-Reply-To']:
+            in_reply_to_list = []
+            for in_reply_to in message['In-Reply-To'].split():
+              in_reply_to_list.append('<' + db_settings['email_address'].split('@')[0] + '.' + db_settings['email_address'].split('@')[1] + '.' + in_reply_to[1:])
+            message.replace_header('In-Reply-To', ' '.join(in_reply_to_list))
+          if message['References']:
+            references_list = []
+            for references in message['References'].split():
+              references_list.append('<' + db_settings['email_address'].split('@')[0] + '.' + db_settings['email_address'].split('@')[1] + '.' + references[1:])
+            message.replace_header('References', ' '.join(references_list))
+      full_message = message.as_bytes()
       rewrite_line(" message %s of %s" % (current, restore_count))
       while True:
         try:
@@ -1707,22 +1721,17 @@ def main(argv):
           if options.label_parent and options.mbox_email:
             if message['Message-ID']:
               message.replace_header('Message-ID', '<' + options.mbox_email.split('@')[0] + '.' + options.mbox_email.split('@')[1] + '.' + message['Message-ID'][1:])
-#              print('Message-ID: ', message['Message-ID'])
               if message['In-Reply-To']:
                 in_reply_to_list = []
                 for in_reply_to in message['In-Reply-To'].split():
                   in_reply_to_list.append('<' + options.mbox_email.split('@')[0] + '.' + options.mbox_email.split('@')[1] + '.' + in_reply_to[1:])
                 message.replace_header('In-Reply-To', ' '.join(in_reply_to_list))
-#                print('In-Reply-To: ', message['In-Reply-To'])
               if message['References']:
                 references_list = []
                 for references in message['References'].split():
                   references_list.append('<' + options.mbox_email.split('@')[0] + '.' + options.mbox_email.split('@')[1] + '.' + references[1:])
                 message.replace_header('References', ' '.join(references_list))
-#                print('References: ', message['References'])
-#            continue
           msg_account, internal_datetime = message.get_from().split(' ', 1)
-#          internal_datetime_seconds = time.mktime(email.utils.parsedate(internal_datetime))
           internal_datetime_seconds = float(email.utils.mktime_tz(email.utils.parsedate_tz(internal_datetime)))
           rewrite_line(' message %s of %s' %
             (current, restore_count))
